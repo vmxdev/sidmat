@@ -20,6 +20,9 @@
 /* Ethernet addresses are 6 bytes */
 #define ETHER_ADDR_LEN	6
 
+/* host name maximum length */
+#define HOSTNAME_MAX 256
+
 /* Ethernet header */
 struct sniff_ethernet {
 	u_char  ether_dhost[ETHER_ADDR_LEN];    /* destination host address */
@@ -90,11 +93,22 @@ ip4_cmp(const void *m1, const void *m2)
  * Read name in DNS format with compression
  */
 static int
-read_dns_name(u_char *base, u_char *ptr, char *name)
+read_dns_name(u_char *base, u_char *ptr, char *name, int psize)
 {
 	u_char c;
 	int len;
 	int count = 0, compressed = 0;
+	char *base_name = name;
+
+#define SAFE_PTRS_INC(PTR, COUNT, NAME)\
+do {\
+	ptr += PTR;\
+	if ((ptr > (base + psize)) || (ptr < base)) return 0;\
+	count += COUNT;\
+	if ((count > HOSTNAME_MAX) || (count < 0)) return 0;\
+	name += NAME;\
+	if ((name > (base_name + HOSTNAME_MAX)) || (name < base_name)) return 0;\
+} while (0)
 
 	for (;;) {
 		int i;
@@ -105,8 +119,8 @@ read_dns_name(u_char *base, u_char *ptr, char *name)
 			int offset;
 
 			offset = (ntohs(*(u_short *)(ptr)) - 0xc000);
-			ptr = base + offset;
-			count += 2;
+			ptr = base;
+			SAFE_PTRS_INC(offset, 2, 0); /* ptr += offset; count += 2; */
 			compressed = 1;
 			continue;
 		}
@@ -115,7 +129,7 @@ read_dns_name(u_char *base, u_char *ptr, char *name)
 		if (len == 0) {
 			if (count > 0) {
 				*(name - 1) = '\0';
-				if (!compressed) count++;
+				if (!compressed) SAFE_PTRS_INC(0, 1, 0); /*count++;*/
 			} else {
 				*name = '\0';
 			}
@@ -124,14 +138,18 @@ read_dns_name(u_char *base, u_char *ptr, char *name)
 
 		ptr++;
 		if (!compressed) count++;
-		for (i=0; i<len; i++, name++, ptr++) {
+		for (i=0; i<len; i++) {
 			*name = *ptr;
-			if (!compressed) count++;
+			if (!compressed) SAFE_PTRS_INC(0, 1, 0); /*count++;*/
+			SAFE_PTRS_INC(1, 0, 1); /* name++; ptr++; */
 		}
-		*name++ = '.';
+		*name = '.';
+		SAFE_PTRS_INC(0, 0, 1); /* name++; */
 	}
 
 	return count;
+
+#undef SAFE_PTRS_INC
 }
 
 void
@@ -141,12 +159,13 @@ got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet)
 	const struct sniff_ip *ip;              /* The IP header */
 	const struct sniff_udp *udp;            /* The UDP header */
 	const HEADER *dnsh;                     /* The DNS header */
-	u_char *resp, *rptr;                    /* payload */
+	u_char *dnspacket, *rptr;               /* payload */
 
 	int size_ip;
 	int name_off, n_ans;
+	int psize;
 
-	char name[256];
+	char name[HOSTNAME_MAX];
 
 	/* define/compute ip header offset */
 	ip = (struct sniff_ip*)(packet + SIZE_ETHERNET);
@@ -162,35 +181,46 @@ got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet)
 	}
 
 	udp = (struct sniff_udp*)(packet + SIZE_ETHERNET + size_ip);
+	psize = ntohs(udp->uh_ulen) - sizeof(struct sniff_udp);
 	dnsh = (HEADER *)((char *)udp + sizeof(struct sniff_udp));
 
 	if ((dnsh->qr != 1) || (dnsh->rcode != 0) || (dnsh->qdcount == 0) || (dnsh->ancount == 0)) {
 		return;
 	}
 
-	resp = (u_char *)dnsh;
-	rptr = (u_char *)((char *)dnsh + sizeof(HEADER));
+	dnspacket = (u_char *)dnsh;
+	rptr = dnspacket;
 
-	name_off = read_dns_name(resp, rptr, name);
+#define SAFE_PPTR_INC(PTR, N)\
+do {\
+	PTR += N;\
+	if (PTR > (dnspacket + psize)) return;\
+} while (0)
+
+	SAFE_PPTR_INC(rptr, sizeof(HEADER));
+
+	name_off = read_dns_name(dnspacket, rptr, name, psize);
+	if (name_off == 0) return;
+
 	/* check DNS query against regex */
 	if (regexec(&re, name, (size_t) 0, NULL, 0) != 0) {
 		return;
 	}
-	rptr += name_off;
-
-	rptr += sizeof(u_short) * 2;
+	SAFE_PPTR_INC(rptr, name_off);
+	SAFE_PPTR_INC(rptr, sizeof(u_short) * 2);
 
 	for (n_ans = 0; n_ans < ntohs(dnsh->ancount); n_ans++) {
 		int atype, rdlength;
 
-		name_off = read_dns_name(resp, rptr, name);
-		rptr += name_off;
+		name_off = read_dns_name(dnspacket, rptr, name, psize);
+		if (name_off == 0) return;
+		SAFE_PPTR_INC(rptr, name_off);
 
 		atype = ntohs(*(u_short *)rptr);
-		rptr += sizeof(u_short) * 4; /* skip class, ttl */
+		SAFE_PPTR_INC(rptr, sizeof(u_short) * 4); /* skip class, ttl */
 
 		rdlength = ntohs(*(u_short *)rptr);
-		rptr += sizeof(u_short);
+		SAFE_PPTR_INC(rptr, sizeof(u_short));
 
 		if ((atype == 1) && (rdlength == 4)) {
 			int addr_new = 0;
@@ -214,8 +244,9 @@ got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet)
 				printf("%d.%d.%d.%d\n", *(rptr + 0), *(rptr + 1), *(rptr + 2), *(rptr + 3));
 			}
 		}
-		rptr += rdlength;
+		SAFE_PPTR_INC(rptr, rdlength);
 	}
+#undef SAFE_PPTR_INC
 }
 
 int
