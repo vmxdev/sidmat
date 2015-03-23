@@ -20,6 +20,16 @@ $ cc -Wall sidmat.c -o sidmat -lpcap
 # ./sidmat eth0 ""
 ```
 
+(with 'd' option will print also mathed domain name to stderr)
+```sh
+# ./sidmat eth0 "." d
+ # youtube.com
+ 173.194.122.238
+ # dropbox.com
+ 108.160.166.62
+ ...
+```
+
 (will print resolved google.some.tld or sub.domain.google.some.tld)
 ```sh
 # ./sidmat eth0 "^google\.|\.google\."

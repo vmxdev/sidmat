@@ -25,14 +25,16 @@
 #define HOSTNAME_MAX 256
 
 /* Ethernet header */
-struct sniff_ethernet {
+struct sniff_ethernet
+{
 	u_char  ether_dhost[ETHER_ADDR_LEN];    /* destination host address */
 	u_char  ether_shost[ETHER_ADDR_LEN];    /* source host address */
 	u_short ether_type;                     /* IP? ARP? RARP? etc */
 };
 
 /* IP header */
-struct sniff_ip {
+struct sniff_ip
+{
 	u_char  ip_vhl;                 /* version << 4 | header length >> 2 */
 	u_char  ip_tos;                 /* type of service */
 	u_short ip_len;                 /* total length */
@@ -60,10 +62,18 @@ struct sniff_udp
 };
 
 /*
- * global variables
+ * user data
  */
-static regex_t re;
-static u_int *addrs = NULL, naddrs = 0;
+
+struct user_data
+{
+	regex_t re;
+	u_int *addrs;
+	u_int naddrs;
+
+	int debug;
+};
+
 
 /*
  * print help text
@@ -166,7 +176,12 @@ got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet)
 	int name_off, n_ans;
 	int psize;
 
-	char name[HOSTNAME_MAX];
+	char name[HOSTNAME_MAX], debug_name[HOSTNAME_MAX];
+	struct user_data *data;
+
+	(void)header;
+
+	data = (struct user_data *)args;
 
 	/* define/compute ip header offset */
 	ip = (struct sniff_ip*)(packet + SIZE_ETHERNET);
@@ -204,9 +219,14 @@ do {\
 	if (name_off == 0) return;
 
 	/* check DNS query against regex */
-	if (regexec(&re, name, (size_t) 0, NULL, 0) != 0) {
+	if (regexec(&(data->re), name, (size_t) 0, NULL, 0) != 0) {
 		return;
 	}
+	/* store name for debug */
+	if (data->debug) {
+		strncpy(debug_name, name, HOSTNAME_MAX);
+	}
+
 	SAFE_PPTR_INC(rptr, name_off);
 	SAFE_PPTR_INC(rptr, sizeof(u_short) * 2);
 
@@ -226,22 +246,25 @@ do {\
 		if ((atype == 1) && (rdlength == 4)) {
 			int addr_new = 0;
 
-			if (addrs) {
-				if (!bsearch(rptr, addrs, naddrs, sizeof(u_int), &ip4_cmp)) {
-					naddrs++;
-					addrs = realloc(addrs, naddrs * sizeof(u_int));
-					memcpy(&addrs[naddrs - 1], rptr, sizeof(u_int));
-					qsort(addrs, naddrs, sizeof(u_int), ip4_cmp);
+			if (data->addrs) {
+				if (!bsearch(rptr, data->addrs, data->naddrs, sizeof(u_int), &ip4_cmp)) {
+					data->naddrs++;
+					data->addrs = realloc(data->addrs, data->naddrs * sizeof(u_int));
+					memcpy(&data->addrs[data->naddrs - 1], rptr, sizeof(u_int));
+					qsort(data->addrs, data->naddrs, sizeof(u_int), ip4_cmp);
 					addr_new = 1;
 				}
 			} else {
-				addrs = malloc(sizeof(u_int));
-				naddrs = 1;
-				memcpy(addrs, rptr, sizeof(u_int));
+				data->addrs = malloc(sizeof(u_int));
+				data->naddrs = 1;
+				memcpy(data->addrs, rptr, sizeof(u_int));
 				addr_new = 1;
 			}
 
 			if (addr_new) {
+				if (data->debug) {
+					fprintf(stderr, "# %s\n", debug_name);
+				}
 				printf("%d.%d.%d.%d\n", *(rptr + 0), *(rptr + 1), *(rptr + 2), *(rptr + 3));
 			}
 		}
@@ -263,14 +286,27 @@ main(int argc, char *argv[])
 	bpf_u_int32 net;			/* ip */
 	char *regstr;
 
-	if (argc != 3) {
+	struct user_data data;
+
+	data.addrs = NULL;
+	data.naddrs = 0;
+	data.debug = 0;
+
+	if (argc < 3) {
 		print_app_usage(argv[0]);
 		return EXIT_FAILURE;
 	}
 
+	/* additional options */
+	if (argc == 4) {
+		if (strchr(argv[3], 'd') != NULL) {
+			data.debug = 1;
+		}
+	}
+
 	/* compile regex */
 	regstr = argv[2];
-	if (regcomp(&re, regstr, REG_EXTENDED | REG_NOSUB) != 0) {
+	if (regcomp(&data.re, regstr, REG_EXTENDED | REG_NOSUB) != 0) {
 		fprintf(stderr, "Couldn't compile regex '%s'\n", regstr);
 		return EXIT_FAILURE;
 	}
@@ -313,13 +349,13 @@ main(int argc, char *argv[])
 	}
 
 	/* now we can set our callback function */
-	pcap_loop(handle, 0, got_packet, NULL);
+	pcap_loop(handle, 0, got_packet, (u_char *)&data);
 
 	/* FIXME: unreachable code */
 	/* cleanup */
 	pcap_freecode(&fp);
 	pcap_close(handle);
-	regfree(&re);
+	regfree(&data.re);
 
 	return EXIT_SUCCESS;
 }
