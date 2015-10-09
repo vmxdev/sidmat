@@ -348,6 +348,9 @@ main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
+	/* set output buffering mode */
+	setvbuf(stdout, NULL, _IOLBF, 1024);
+
 	/* now we can set our callback function */
 	pcap_loop(handle, 0, got_packet, (u_char *)&data);
 
