@@ -1,79 +1,11 @@
+#include "sidmat_common.h"
 #include <pcap.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <ctype.h>
-#include <errno.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <arpa/nameser.h>
-#include <resolv.h>
-#include <regex.h>
 
 /* default snap length (maximum bytes per packet to capture) */
 #define SNAP_LEN 1518
 
 /* ethernet headers are always exactly 14 bytes [1] */
 #define SIZE_ETHERNET 14
-
-/* Ethernet addresses are 6 bytes */
-#define ETHER_ADDR_LEN	6
-
-/* host name maximum length */
-#define HOSTNAME_MAX 256
-
-/* Ethernet header */
-struct sniff_ethernet
-{
-	u_char  ether_dhost[ETHER_ADDR_LEN];    /* destination host address */
-	u_char  ether_shost[ETHER_ADDR_LEN];    /* source host address */
-	u_short ether_type;                     /* IP? ARP? RARP? etc */
-};
-
-/* IP header */
-struct sniff_ip
-{
-	u_char  ip_vhl;                 /* version << 4 | header length >> 2 */
-	u_char  ip_tos;                 /* type of service */
-	u_short ip_len;                 /* total length */
-	u_short ip_id;                  /* identification */
-	u_short ip_off;                 /* fragment offset field */
-	#define IP_RF 0x8000            /* reserved fragment flag */
-	#define IP_DF 0x4000            /* dont fragment flag */
-	#define IP_MF 0x2000            /* more fragments flag */
-	#define IP_OFFMASK 0x1fff       /* mask for fragmenting bits */
-	u_char  ip_ttl;                 /* time to live */
-	u_char  ip_p;                   /* protocol */
-	u_short ip_sum;                 /* checksum */
-	struct  in_addr ip_src,ip_dst;  /* source and dest address */
-};
-#define IP_HL(ip)               (((ip)->ip_vhl) & 0x0f)
-#define IP_V(ip)                (((ip)->ip_vhl) >> 4)
-
-/* UDP header */
-struct sniff_udp
-{
-	u_short	uh_sport;		/* source port */
-	u_short	uh_dport;		/* destination port */
-	u_short	uh_ulen;		/* datagram length */
-	u_short	uh_sum;			/* datagram checksum */
-};
-
-/*
- * user data
- */
-
-struct user_data
-{
-	regex_t re;
-	u_int *addrs;
-	u_int naddrs;
-
-	int debug;
-};
-
 
 /*
  * print help text
@@ -89,94 +21,12 @@ print_app_usage(char *prog)
 	printf("\n");
 }
 
-/*
- * ipv4 comparator
- */
-static int
-ip4_cmp(const void *m1, const void *m2)
-{
-	u_int *ip1 = (u_int *) m1;
-	u_int *ip2 = (u_int *) m2;
-	return (*ip1 - *ip2);
-}
-
-/*
- * Read name in DNS format with compression
- */
-static int
-read_dns_name(u_char *base, u_char *ptr, char *name, int psize)
-{
-	u_char c;
-	int len;
-	int count = 0, compressed = 0;
-	char *base_name = name;
-
-#define SAFE_PTRS_INC(PTR, COUNT, NAME)\
-do {\
-	ptr += PTR;\
-	if ((ptr > (base + psize)) || (ptr < base)) return 0;\
-	count += COUNT;\
-	if ((count > HOSTNAME_MAX) || (count < 0)) return 0;\
-	name += NAME;\
-	if ((name > (base_name + HOSTNAME_MAX)) || (name < base_name)) return 0;\
-} while (0)
-
-	for (;;) {
-		int i;
-
-		c = *ptr;
-
-		if ((c & 0xc0) == 0xc0) {
-			int offset;
-
-			offset = (ntohs(*(u_short *)(ptr)) - 0xc000);
-			ptr = base;
-			SAFE_PTRS_INC(offset, 2, 0); /* ptr += offset; count += 2; */
-			compressed = 1;
-			continue;
-		}
-
-		len = c;
-		if (len == 0) {
-			if (count > 0) {
-				*(name - 1) = '\0';
-				if (!compressed) SAFE_PTRS_INC(0, 1, 0); /*count++;*/
-			} else {
-				*name = '\0';
-			}
-			break;
-		}
-
-		ptr++;
-		if (!compressed) count++;
-		for (i=0; i<len; i++) {
-			*name = *ptr;
-			if (!compressed) SAFE_PTRS_INC(0, 1, 0); /*count++;*/
-			SAFE_PTRS_INC(1, 0, 1); /* name++; ptr++; */
-		}
-		*name = '.';
-		SAFE_PTRS_INC(0, 0, 1); /* name++; */
-	}
-
-	return count;
-
-#undef SAFE_PTRS_INC
-}
-
 void
 got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet)
 {
 	/* declare pointers to packet headers */
 	const struct sniff_ip *ip;              /* The IP header */
-	const struct sniff_udp *udp;            /* The UDP header */
-	const HEADER *dnsh;                     /* The DNS header */
-	u_char *dnspacket, *rptr;               /* payload */
-
 	int size_ip;
-	int name_off, n_ans;
-	int psize;
-
-	char name[HOSTNAME_MAX], debug_name[HOSTNAME_MAX];
 	struct user_data *data;
 
 	(void)header;
@@ -196,83 +46,8 @@ got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet)
 		return;
 	}
 
-	udp = (struct sniff_udp*)(packet + SIZE_ETHERNET + size_ip);
-	psize = ntohs(udp->uh_ulen) - sizeof(struct sniff_udp);
-	dnsh = (HEADER *)((char *)udp + sizeof(struct sniff_udp));
-
-	if ((dnsh->qr != 1) || (dnsh->rcode != 0) || (dnsh->qdcount == 0) || (dnsh->ancount == 0)) {
-		return;
-	}
-
-	dnspacket = (u_char *)dnsh;
-	rptr = dnspacket;
-
-#define SAFE_PPTR_INC(PTR, N)\
-do {\
-	PTR += N;\
-	if (PTR > (dnspacket + psize)) return;\
-} while (0)
-
-	SAFE_PPTR_INC(rptr, sizeof(HEADER));
-
-	name_off = read_dns_name(dnspacket, rptr, name, psize);
-	if (name_off == 0) return;
-
-	/* check DNS query against regex */
-	if (regexec(&(data->re), name, (size_t) 0, NULL, 0) != 0) {
-		return;
-	}
-	/* store name for debug */
-	if (data->debug) {
-		strncpy(debug_name, name, HOSTNAME_MAX);
-	}
-
-	SAFE_PPTR_INC(rptr, name_off);
-	SAFE_PPTR_INC(rptr, sizeof(u_short) * 2);
-
-	for (n_ans = 0; n_ans < ntohs(dnsh->ancount); n_ans++) {
-		int atype, rdlength;
-
-		name_off = read_dns_name(dnspacket, rptr, name, psize);
-		if (name_off == 0) return;
-		SAFE_PPTR_INC(rptr, name_off);
-
-		atype = ntohs(*(u_short *)rptr);
-		SAFE_PPTR_INC(rptr, sizeof(u_short) * 4); /* skip class, ttl */
-
-		rdlength = ntohs(*(u_short *)rptr);
-		SAFE_PPTR_INC(rptr, sizeof(u_short));
-
-		if ((atype == 1) && (rdlength == 4)) {
-			int addr_new = 0;
-
-			if (data->addrs) {
-				if (!bsearch(rptr, data->addrs, data->naddrs, sizeof(u_int), &ip4_cmp)) {
-					data->naddrs++;
-					data->addrs = realloc(data->addrs, data->naddrs * sizeof(u_int));
-					memcpy(&data->addrs[data->naddrs - 1], rptr, sizeof(u_int));
-					qsort(data->addrs, data->naddrs, sizeof(u_int), ip4_cmp);
-					addr_new = 1;
-				}
-			} else {
-				data->addrs = malloc(sizeof(u_int));
-				data->naddrs = 1;
-				memcpy(data->addrs, rptr, sizeof(u_int));
-				addr_new = 1;
-			}
-
-			if (addr_new) {
-				if (data->debug) {
-					fprintf(stderr, "# %s\n", debug_name);
-				}
-				printf("%d.%d.%d.%d\n", *(rptr + 0), *(rptr + 1), *(rptr + 2), *(rptr + 3));
-			}
-		}
-		SAFE_PPTR_INC(rptr, rdlength);
-	}
-#undef SAFE_PPTR_INC
+	dns_ip_packet((char *)packet + SIZE_ETHERNET, data);
 }
-
 int
 main(int argc, char *argv[])
 {
