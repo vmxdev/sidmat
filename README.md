@@ -77,3 +77,11 @@ fill 'site' set with ip addresses of site.com or sub.domain.site.com
 ```sh
 /opt/sidmat eth0 "^site\.com$|\.site\.com$" | /usr/bin/xargs -I {} /usr/sbin/ipset -A site {}
 ```
+
+
+In case of big domains list you can hold it in file. With 'f' option second argument interpreted as file name
+```sh
+# ./sidmat eth0 domains.txt df
+```
+
+File expected to be one-line regex ('domain1.tld$|domain2.tld$|domain3.tld$...')

@@ -243,5 +243,26 @@ do {\
 	return;
 }
 
+static char *
+read_from_file(const char *fn)
+{
+	FILE *f;
+	char *regstr;
+	size_t size;
+
+	f = fopen(fn, "r");
+	if (!f) {
+		return NULL;
+	}
+	fseek(f, 0, SEEK_END);
+	size = ftell(f);
+	regstr = malloc(size);
+	fseek(f, 0, SEEK_SET);
+	fread(regstr, 1, size, f);
+	fclose(f);
+
+	return regstr;
+}
+
 #endif
 

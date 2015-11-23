@@ -48,6 +48,7 @@ got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet)
 
 	dns_ip_packet((char *)packet + SIZE_ETHERNET, data);
 }
+
 int
 main(int argc, char *argv[])
 {
@@ -59,7 +60,7 @@ main(int argc, char *argv[])
 	struct bpf_program fp;			/* compiled filter program (expression) */
 	bpf_u_int32 mask;			/* subnet mask */
 	bpf_u_int32 net;			/* ip */
-	char *regstr;
+	char *regstr = NULL;
 
 	struct user_data data;
 
@@ -77,14 +78,25 @@ main(int argc, char *argv[])
 		if (strchr(argv[3], 'd') != NULL) {
 			data.debug = 1;
 		}
+		if (strchr(argv[3], 'f') != NULL) {
+			/* read regex from file */
+			regstr = read_from_file(argv[2]);
+			if (!regstr) {
+				fprintf(stderr, "Can't open %s\n", argv[2]);
+				return EXIT_FAILURE;
+			}
+		}
 	}
 
 	/* compile regex */
-	regstr = argv[2];
+	if (!regstr) {
+		regstr = strdup(argv[2]);
+	}
 	if (regcomp(&data.re, regstr, REG_EXTENDED | REG_NOSUB) != 0) {
 		fprintf(stderr, "Couldn't compile regex '%s'\n", regstr);
 		return EXIT_FAILURE;
 	}
+	free(regstr);
 
 	dev = argv[1];
 	

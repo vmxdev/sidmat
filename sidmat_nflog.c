@@ -58,14 +58,25 @@ main(int argc, char *argv[])
 		if (strchr(argv[3], 'd') != NULL) {
 			data.debug = 1;
 		}
+		if (strchr(argv[3], 'f') != NULL) {
+			/* read regex from file */
+			regstr = read_from_file(argv[2]);
+			if (!regstr) {
+				fprintf(stderr, "Can't open %s\n", argv[2]);
+				return EXIT_FAILURE;
+			}
+		}
 	}
 
 	/* compile regex */
-	regstr = argv[2];
+	if (!regstr) {
+		regstr = strdup(argv[2]);
+	}
 	if (regcomp(&data.re, regstr, REG_EXTENDED | REG_NOSUB) != 0) {
 		fprintf(stderr, "Couldn't compile regex '%s'\n", regstr);
 		return EXIT_FAILURE;
 	}
+	free(regstr);
 
 	group = atoi(argv[1]);
 
