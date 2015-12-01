@@ -17,6 +17,9 @@
 /* host name maximum length */
 #define HOSTNAME_MAX 256
 
+/* max addresses in list (256M) */
+#define SMAXADDRS (256 * 1024 * 1024)
+
 /* IP header */
 struct sniff_ip
 {
@@ -56,7 +59,7 @@ struct user_data
 	uint32_t *addrs;
 	size_t    naddrs;
 
-	int debug;
+	int debug, info, not_unique;
 };
 
 
@@ -138,7 +141,7 @@ do {\
 #undef SAFE_PTRS_INC
 }
 
-void
+static void
 dns_ip_packet(char *packet, struct user_data *data)
 {
 	const struct sniff_ip *ip;              /* The IP header */
@@ -151,6 +154,7 @@ dns_ip_packet(char *packet, struct user_data *data)
 	int psize;
 
 	char name[HOSTNAME_MAX], debug_name[HOSTNAME_MAX];
+	int print_addr = 0;
 
 	/* define/compute ip header offset */
 	ip = (struct sniff_ip*)(packet);
@@ -192,7 +196,7 @@ do {\
 		return;
 	}
 	/* store name for debug */
-	if (data->debug) {
+	if (data->debug || data->info) {
 		strncpy(debug_name, name, HOSTNAME_MAX);
 	}
 
@@ -212,30 +216,43 @@ do {\
 		rdlength = ntohs(*(u_short *)rptr);
 		SAFE_PPTR_INC(rptr, sizeof(u_short));
 
-		if ((atype == 1) && (rdlength == 4)) {
-			int addr_new = 0;
+		if ((atype == 1) && (rdlength == 4) && (!data->not_unique)) {
 
 			if (data->addrs) {
 				if (!bsearch(rptr, data->addrs, data->naddrs, sizeof(uint32_t), &ip4_cmp)) {
 					data->naddrs++;
+					if (data->naddrs > SMAXADDRS) {
+						/* reset list */
+						free(data->addrs);
+						data->addrs = NULL;
+						data->naddrs = 1;
+					}
 					data->addrs = realloc(data->addrs, data->naddrs * sizeof(uint32_t));
 					memcpy(&data->addrs[data->naddrs - 1], rptr, sizeof(uint32_t));
 					qsort(data->addrs, data->naddrs, sizeof(uint32_t), &ip4_cmp);
-					addr_new = 1;
+					print_addr = 1;
 				}
 			} else {
 				data->addrs = malloc(sizeof(uint32_t));
 				data->naddrs = 1;
 				memcpy(data->addrs, rptr, sizeof(uint32_t));
-				addr_new = 1;
+				print_addr = 1;
 			}
+		}
 
-			if (addr_new) {
-				if (data->debug) {
-					fprintf(stderr, "# %s\n", debug_name);
-				}
-				printf("%d.%d.%d.%d\n", *(rptr + 0), *(rptr + 1), *(rptr + 2), *(rptr + 3));
+		if ((atype == 1) && (rdlength == 4) && (data->not_unique)) {
+			print_addr = 1;
+		}
+
+		if (print_addr) {
+			if (data->debug) {
+				fprintf(stderr, "# %s\n", debug_name);
 			}
+			printf("%d.%d.%d.%d", *(rptr + 0), *(rptr + 1), *(rptr + 2), *(rptr + 3));
+			if (data->info) {
+				printf("\t%s", debug_name);
+			}
+			printf("\n");
 		}
 		SAFE_PPTR_INC(rptr, rdlength);
 	}
@@ -262,6 +279,46 @@ read_from_file(const char *fn)
 	fclose(f);
 
 	return regstr;
+}
+
+static int
+sidmat_init(struct user_data *data, const char *r, const char *opt)
+{
+	char *regstr = NULL;
+
+	data->debug = data->not_unique = data->info = 0;
+
+	if (opt) {
+		if (strchr(opt, 'd') != NULL) {
+			data->debug = 1;
+		}
+		if (strchr(opt, 'i') != NULL) {
+			data->info = 1;
+		}
+		if (strchr(opt, 'u') != NULL) {
+			data->not_unique = 1;
+		}
+
+		if (strchr(opt, 'f') != NULL) {
+			regstr = read_from_file(r);
+			if (!regstr) {
+				fprintf(stderr, "Can't open %s\n", r);
+				return 0;
+			}
+		}
+	}
+
+	if (!regstr) {
+		regstr = strdup(r);
+	}
+	/* compile regex */
+	if (regcomp(&(data->re), regstr, REG_EXTENDED | REG_NOSUB) != 0) {
+		fprintf(stderr, "Couldn't compile regex '%s'\n", regstr);
+		return 0;
+	}
+	free(regstr);
+
+	return 1;
 }
 
 #endif

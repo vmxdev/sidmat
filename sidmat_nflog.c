@@ -55,28 +55,12 @@ main(int argc, char *argv[])
 
 	/* additional options */
 	if (argc == 4) {
-		if (strchr(argv[3], 'd') != NULL) {
-			data.debug = 1;
-		}
-		if (strchr(argv[3], 'f') != NULL) {
-			/* read regex from file */
-			regstr = read_from_file(argv[2]);
-			if (!regstr) {
-				fprintf(stderr, "Can't open %s\n", argv[2]);
-				return EXIT_FAILURE;
-			}
-		}
+		opt = argv[3];
 	}
 
-	/* compile regex */
-	if (!regstr) {
-		regstr = strdup(argv[2]);
-	}
-	if (regcomp(&data.re, regstr, REG_EXTENDED | REG_NOSUB) != 0) {
-		fprintf(stderr, "Couldn't compile regex '%s'\n", regstr);
+	if (!sidmat_init(&data, argv[2], opt)) {
 		return EXIT_FAILURE;
 	}
-	free(regstr);
 
 	group = atoi(argv[1]);
 
