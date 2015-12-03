@@ -62,10 +62,16 @@ Print resolved google.some.tld or sub.domain.google.some.tld
 
 Print tab-separated time, address and domain for all succesfully resolved domains
 ```sh
-# ./sidmat eth0 "." iu | awk '{ print strftime("%Y-%m-%d %H:%M:%S"), "\t", $0; fflush(); }'
+# ./sidmat eth0 "." iu | while IFS= read -r line; do printf '%s\t%s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"; done
 2015-12-01 22:18:03 	 213.180.204.3	www.ya.ru
 2015-12-01 22:18:03 	 93.158.134.3	www.ya.ru
 ...
+```
+
+or with gawk
+
+```sh
+# ./sidmat eth0 "." iu | gawk '{ print strftime("%Y-%m-%d %H:%M:%S"), "\t", $0; fflush(); }'
 ```
 
 ###Using with iptables
@@ -74,7 +80,7 @@ Be very carefull with blocking traffic. Utility does not check IP addresses in D
 
 Block all traffic from site.com and subdomains
 ```sh
-/opt/sidmat eth0 "^site\.com$|\.site\.com$" | /usr/bin/xargs -I {} /sbin/iptables -A INPUT -s {} -j DROP
+# /opt/sidmat eth0 "^site\.com$|\.site\.com$" | /usr/bin/xargs -I {} /sbin/iptables -A INPUT -s {} -j DROP
 ```
 
 ###Using with ipset
@@ -85,7 +91,7 @@ create ip set 'site'
 
 fill 'site' set with ip addresses of site.com or sub.domain.site.com
 ```sh
-/opt/sidmat eth0 "^site\.com$|\.site\.com$" | /usr/bin/xargs -I {} /usr/sbin/ipset -A site {}
+# /opt/sidmat eth0 "^site\.com$|\.site\.com$" | /usr/bin/xargs -I {} /usr/sbin/ipset -A site {}
 ```
 
 ###Additional options
