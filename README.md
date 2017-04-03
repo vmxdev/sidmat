@@ -8,7 +8,7 @@ It can be useful for "domain filtering" or other operations when you need to use
 `sidmat` can use pcap or nflog (under Linux) for packet capture.
 
 
-###Compiling
+### Compiling
 with pcap as data source:
 
 ```sh
@@ -20,7 +20,7 @@ nflog:
 $ cc -Wall sidmat_nflog.c -o sidmat -lnetfilter_log
 ```
 
-###Running
+### Running
 For pcap flavour first argument is interface name. For nflog first argument is nflog group.
 
 Second argument is regular expression and third is additional options.
@@ -74,7 +74,7 @@ or with gawk
 # ./sidmat eth0 "." iu | gawk '{ print strftime("%Y-%m-%d %H:%M:%S"), "\t", $0; fflush(); }'
 ```
 
-###Using with iptables
+### Using with iptables
 
 Be very carefull with blocking traffic. Utility does not check IP addresses in DNS response, so you can get unexpected results from it.
 
@@ -83,7 +83,7 @@ Block all traffic from site.com and subdomains
 # /opt/sidmat eth0 "^site\.com$|\.site\.com$" | /usr/bin/xargs -I {} /sbin/iptables -A INPUT -s {} -j DROP
 ```
 
-###Using with ipset
+### Using with ipset
 create ip set 'site'
 ```sh
 # /usr/sbin/ipset -N site iphash
@@ -94,7 +94,7 @@ fill 'site' set with ip addresses of site.com or sub.domain.site.com
 # /opt/sidmat eth0 "^site\.com$|\.site\.com$" | /usr/bin/xargs -I {} /usr/sbin/ipset -A site {}
 ```
 
-###Additional options
+### Additional options
 
 By default `sidmat` holds resolved addresses in memory, so each unique address printed only once.
 
