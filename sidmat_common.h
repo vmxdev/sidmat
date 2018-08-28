@@ -20,6 +20,13 @@
 /* max addresses in list (256M) */
 #define SMAXADDRS (256 * 1024 * 1024)
 
+#define NOMEM_EXIT()                                                    \
+do {                                                                    \
+	fprintf(stderr, "Insufficient memory, file %s, near line %d\n", \
+		__FILE__, __LINE__);                                    \
+	exit(1);                                                        \
+} while(0)
+
 /* IP header */
 struct sniff_ip
 {
@@ -274,6 +281,9 @@ read_from_file(const char *fn)
 	fseek(f, 0, SEEK_END);
 	size = ftell(f);
 	regstr = malloc(size);
+	if (!regstr) {
+		NOMEM_EXIT();
+	}
 	fseek(f, 0, SEEK_SET);
 	fread(regstr, 1, size, f);
 	fclose(f);
@@ -310,6 +320,9 @@ sidmat_init(struct user_data *data, const char *r, const char *opt)
 
 	if (!regstr) {
 		regstr = strdup(r);
+		if (!regstr) {
+			NOMEM_EXIT();
+		}
 	}
 	/* compile regex */
 	if (regcomp(&(data->re), regstr, REG_EXTENDED | REG_NOSUB) != 0) {
